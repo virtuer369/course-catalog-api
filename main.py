@@ -3,6 +3,7 @@ from data import get_all_courses
 from models import Course
 from fastapi import FastAPI, HTTPException
 from data import find_course, get_all_courses
+from fastapi import Depends, FastAPI, HTTPException 
 
 app = FastAPI(title="Course Catalog API")
 
@@ -11,11 +12,19 @@ app = FastAPI(title="Course Catalog API")
 def read_root():
     return {"message": "Course Catalog API is running"}
 
+def pagination(page: int = 1, page_size: int = 20):
+    offset = (page - 1) * page_size
+
+    return {
+        "offset": offset,
+        "limit": page_size,
+    }
 
 @app.get("/courses", response_model=list[Course])
 def list_courses(
     is_elective: bool | None = None,
     sort: str = "popular",
+    p: dict = Depends(pagination),
 ):
     courses = get_all_courses()
 
@@ -35,7 +44,7 @@ def list_courses(
             reverse=True,
         )
 
-    return courses
+    return courses[p["offset"]:p["offset"] + p["limit"]]
 
 @app.get("/courses/{course_id}", response_model=Course)
 def get_course(course_id: str):
