@@ -19,6 +19,7 @@ course-catalog-api/
 ├── models.py
 ├── data.py
 └── main.py
+```
 
 Setup
 Create a virtual environment:

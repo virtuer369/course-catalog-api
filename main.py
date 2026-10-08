@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from data import get_all_courses
 from models import Course
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from data import find_course, get_all_courses
-from fastapi import Depends, FastAPI, HTTPException 
+from fastapi import Depends, FastAPI, HTTPException
+from typing import Literal
 
 app = FastAPI(title="Course Catalog API")
 
@@ -12,7 +13,10 @@ app = FastAPI(title="Course Catalog API")
 def read_root():
     return {"message": "Course Catalog API is running"}
 
-def pagination(page: int = 1, page_size: int = 20):
+def pagination(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
     offset = (page - 1) * page_size
 
     return {
@@ -23,7 +27,7 @@ def pagination(page: int = 1, page_size: int = 20):
 @app.get("/courses", response_model=list[Course])
 def list_courses(
     is_elective: bool | None = None,
-    sort: str = "popular",
+    sort: Literal["popular", "title"] = "popular",
     p: dict = Depends(pagination),
 ):
     courses = get_all_courses()
