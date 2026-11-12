@@ -1,8 +1,15 @@
-from typing import Literal
-from fastapi import Depends, FastAPI, HTTPException, Query
+
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from data import find_course, get_all_courses
-from models import Course, Enrollment, EnrollmentIn
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
+from db import get_db
+from models import Course
+from schemas import CourseOut
+
 
 app = FastAPI(title="Course Catalog API")
 
@@ -12,90 +19,75 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-ENROLLMENTS: list[Enrollment] = []
+
+SessionDep = Annotated[Session, Depends(get_db)]
+
+
+def pagination(page: int = 1, page_size: int = 20):
+    return {
+        "offset": (page - 1) * page_size,
+        "limit": page_size,
+    }
+
 
 @app.get("/")
 def read_root():
     return {"message": "Course Catalog API is running"}
 
-def pagination(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    offset = (page - 1) * page_size
 
-    return {
-        "offset": offset,
-        "limit": page_size,
-    }
-
-@app.get("/courses", response_model=list[Course])
+@app.get("/courses", response_model=list[CourseOut])
 def list_courses(
+    db: SessionDep,
     is_elective: bool | None = None,
-    sort: Literal["popular", "title"] = "popular",
+    sort: str = "popular",
     p: dict = Depends(pagination),
 ):
-    courses = get_all_courses()
+    stmt = select(Course)
 
     if is_elective is not None:
-        courses = [
-            course
-            for course in courses
-            if course.is_elective == is_elective
-        ]
+        stmt = stmt.where(Course.is_elective == is_elective)
 
     if sort == "title":
-        courses = sorted(courses, key=lambda course: course.title)
+        stmt = stmt.order_by(Course.title)
     else:
-        courses = sorted(
-            courses,
-            key=lambda course: course.likes,
-            reverse=True,
-        )
+        stmt = stmt.order_by(Course.likes.desc(), Course.id)
 
-    return courses[p["offset"]:p["offset"] + p["limit"]]
+    stmt = stmt.limit(p["limit"]).offset(p["offset"])
 
-@app.get("/courses/{course_id}", response_model=Course)
-def get_course(course_id: str):
-    course = find_course(course_id)
+    return db.scalars(stmt).all()
+
+
+@app.get("/courses/{course_id}", response_model=CourseOut)
+def get_course(course_id: str, db: SessionDep):
+    course = db.get(Course, course_id)
 
     if course is None:
         raise HTTPException(
             status_code=404,
-            detail="Course not found"
+            detail="Course not found",
         )
 
     return course
 
 
-@app.post("/courses/{course_id}/like", response_model=Course)
-def like_course(course_id: str):
-    course = find_course(course_id)
-
-    if course is None:
-        raise HTTPException(status_code=404, detail="Course not found")
-
-    course.likes += 1
-    return course
-
-
-@app.post("/enrollments", response_model=Enrollment, status_code=201)
-def create_enrollment(data: EnrollmentIn):
-    course = find_course(data.course_id)
-
-    if course is None:
-        raise HTTPException(status_code=404, detail="Course not found")
-
-    enrollment = Enrollment(
-        id=len(ENROLLMENTS) + 1,
-        course_id=data.course_id,
-        student_name=data.student_name,
+@app.post("/courses/{course_id}/like", response_model=CourseOut)
+def like_course(course_id: str, db: SessionDep):
+    stmt = (
+        update(Course)
+        .where(Course.id == course_id)
+        .values(likes=Course.likes + 1)
+        .returning(Course)
     )
 
-    ENROLLMENTS.append(enrollment)
-    return enrollment
+    course = db.scalars(stmt).one_or_none()
 
+    if course is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Course not found",
+        )
 
-@app.get("/enrollments", response_model=list[Enrollment])
-def list_enrollments():
-    return ENROLLMENTS
+    db.commit()
+    db.refresh(course)
+
+    return course
