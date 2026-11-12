@@ -1,14 +1,22 @@
-
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from db import get_db
-from models import Course
-from schemas import CourseOut
+from models import Course, Enrollment, Student
+from schemas import (
+    CourseOut,
+    CourseStats,
+    EnrollmentDetail,
+    EnrollmentIn,
+    EnrollmentOut,
+    StudentIn,
+    StudentOut,
+)
 
 
 app = FastAPI(title="Course Catalog API")
@@ -21,6 +29,45 @@ app.add_middleware(
 )
 
 SessionDep = Annotated[Session, Depends(get_db)]
+
+
+CONSTRAINT_ERRORS = {
+    "students_email_key": (
+        409,
+        "Student with this email already exists",
+    ),
+    "enrollments_course_id_student_id_key": (
+        409,
+        "Student is already enrolled in this course",
+    ),
+    "enrollments_course_id_fkey": (
+        404,
+        "Course not found",
+    ),
+    "enrollments_student_id_fkey": (
+        404,
+        "Student not found",
+    ),
+}
+
+
+def raise_http_error(exc: IntegrityError):
+    constraint_name = getattr(
+        getattr(exc.orig, "diag", None),
+        "constraint_name",
+        None,
+    )
+
+    error = CONSTRAINT_ERRORS.get(constraint_name)
+
+    if error is None:
+        raise exc
+
+    status_code, message = error
+    raise HTTPException(
+        status_code=status_code,
+        detail=message,
+    )
 
 
 def pagination(page: int = 1, page_size: int = 20):
@@ -39,6 +86,7 @@ def read_root():
 def list_courses(
     db: SessionDep,
     is_elective: bool | None = None,
+    level: str | None = None,
     sort: str = "popular",
     p: dict = Depends(pagination),
 ):
@@ -46,6 +94,9 @@ def list_courses(
 
     if is_elective is not None:
         stmt = stmt.where(Course.is_elective == is_elective)
+
+    if level is not None:
+        stmt = stmt.where(Course.level == level)
 
     if sort == "title":
         stmt = stmt.order_by(Course.title)
@@ -91,3 +142,88 @@ def like_course(course_id: str, db: SessionDep):
     db.refresh(course)
 
     return course
+
+
+@app.post(
+    "/students",
+    response_model=StudentOut,
+    status_code=201,
+)
+def create_student(data: StudentIn, db: SessionDep):
+    student = Student(
+        name=data.name,
+        email=data.email,
+    )
+
+    db.add(student)
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        raise_http_error(exc)
+
+    return student
+
+
+@app.post(
+    "/enrollments",
+    response_model=EnrollmentOut,
+    status_code=201,
+)
+def create_enrollment(data: EnrollmentIn, db: SessionDep):
+    enrollment = Enrollment(
+        course_id=data.course_id,
+        student_id=data.student_id,
+    )
+
+    db.add(enrollment)
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        raise_http_error(exc)
+
+    return enrollment
+
+
+@app.get(
+    "/enrollments",
+    response_model=list[EnrollmentDetail],
+)
+def list_enrollments(db: SessionDep):
+    stmt = (
+        select(
+            Enrollment.id,
+            Enrollment.course_id,
+            Course.title.label("course_title"),
+            Enrollment.student_id,
+            Student.name.label("student_name"),
+            Enrollment.enrolled_at,
+        )
+        .join(Enrollment.course)
+        .join(Enrollment.student)
+        .order_by(Enrollment.id)
+    )
+
+    return db.execute(stmt).all()
+
+
+@app.get(
+    "/stats/courses",
+    response_model=list[CourseStats],
+)
+def course_stats(db: SessionDep):
+    stmt = (
+        select(
+            Course.id.label("course_id"),
+            func.count(Enrollment.id).label("enrolled"),
+        )
+        .outerjoin(Course.enrollments)
+        .group_by(Course.id)
+        .order_by(
+            func.count(Enrollment.id).desc(),
+            Course.id,
+        )
+    )
+
+    return db.execute(stmt).all()

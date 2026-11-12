@@ -59,6 +59,7 @@ class Student(Base):
         nullable=False,
         name="email",
     )
+    
 
     enrollments: Mapped[list["Enrollment"]] = relationship(
         back_populates="student",

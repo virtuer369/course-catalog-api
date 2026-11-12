@@ -1,29 +1,43 @@
 # Course Catalog API
 
-Backend API for the Course Catalog project built with FastAPI and Pydantic.
+Backend REST API for managing courses, students, and enrollments. Built with FastAPI, PostgreSQL, SQLAlchemy 2.0, and Alembic.
 
 ## Technologies
 
 - Python
 - FastAPI
 - Pydantic
+- SQLAlchemy 2.0
+- PostgreSQL
+- Alembic
 - Uvicorn
 
 ## Project Structure
 
 ```text
 course-catalog-api/
+├── alembic/
+│   ├── versions/
+│   │   ├── 0001_*.py
+│   │   └── 0002_*.py
+│   └── env.py
+├── .env.example
 ├── .gitignore
-├── README.md
 ├── requirements.txt
+├── config.py
+├── db.py
 ├── models.py
-├── data.py
-└── main.py
+├── schemas.py
+├── main.py
+├── check_db.py
+├── check_models.py
+├── try_errors.py
+└── README.md
 ```
 
 ## Setup
 
-Create a virtual environment:
+### 1. Create a virtual environment
 
 ```powershell
 python -m venv .venv
@@ -35,54 +49,75 @@ Activate it:
 .venv\Scripts\Activate.ps1
 ```
 
-Install dependencies:
+### 2. Install dependencies
 
 ```powershell
 pip install -r requirements.txt
 ```
+
+### 3. Configure the database
+
+Create a PostgreSQL database and a database user.
+
+Copy `.env.example` to `.env` and configure the connection:
+
+```env
+DATABASE_URL=postgresql+psycopg://catalog_app:YOUR_PASSWORD@localhost:5432/course-catalog-db
+```
+
+Do not commit `.env` or database credentials.
+
+### 4. Apply migrations
+
+```powershell
+alembic upgrade head
+```
+
+For a fresh database, sample data can be inserted separately using the project's seed SQL script, if provided.
 
 ## Run
 
 Start the development server:
 
 ```powershell
-fastapi dev main.py
+uvicorn main:app --reload
 ```
 
 The API is available at:
 
 - API root: http://127.0.0.1:8000/
 - Swagger documentation: http://127.0.0.1:8000/docs
+- ReDoc: http://127.0.0.1:8000/redoc
 
 ## API Endpoints
 
-### `GET /`
+### Courses
 
-Health check endpoint.
+**`GET /courses`**
 
-### `GET /courses`
-
-Returns the list of courses.
+Returns a list of courses.
 
 Supported query parameters:
 
-- `is_elective=true/false` — filter courses by elective status
-- `sort=popular` — sort by popularity
-- `sort=title` — sort alphabetically by title
-- `page` — page number
-- `page_size` — number of courses per page
+- `is_elective=true/false` — filter by elective status.
+- `level=beginner/intermediate` — filter by course level.
+- `sort=popular` — sort by popularity.
+- `sort=title` — sort alphabetically by title.
+- `page` — page number.
+- `page_size` — number of courses per page.
 
 Examples:
 
 ```text
 /courses
 /courses?is_elective=true
-/courses?is_elective=false
+/courses?level=beginner
+/courses?level=intermediate
 /courses?sort=title
 /courses?page=2&page_size=2
 ```
 
-### `GET /courses/{course_id}`
+**`GET /courses/{course_id}`**
 
 Returns a single course by its ID.
 
@@ -92,11 +127,13 @@ Example:
 /courses/web-security
 ```
 
-If the course does not exist, the API returns `404 Not Found`.
+Returns `404 Not Found` if the course does not exist.
 
-### `POST /courses/{course_id}/like`
+**`POST /courses/{course_id}/like`**
 
-Increments the like count of a course and returns the updated course.
+Increments the course like count and returns the updated course.
+
+The increment is performed directly in the database using an SQL UPDATE operation.
 
 Example:
 
@@ -106,88 +143,168 @@ POST /courses/web-security/like
 
 Returns `404 Not Found` if the course does not exist.
 
-### `POST /enrollments`
+### Students
 
-Creates an enrollment for an existing course.
+Student records are stored in PostgreSQL.
+
+The API supports student creation and retrieval using SQLAlchemy models and Pydantic schemas.
+
+### Enrollments
+
+**`POST /enrollments`**
+
+Creates an enrollment for an existing course and student.
 
 Example request body:
 
 ```json
 {
   "courseId": "web-security",
-  "studentName": "Aigerim"
+  "studentId": 11
 }
 ```
 
-The `studentName` field must contain at least two characters. The `courseId` must reference an existing course.
+**`GET /enrollments`**
 
-- `201 Created` — enrollment created successfully
-- `404 Not Found` — course does not exist
-- `422 Unprocessable Entity` — request validation failed
+Returns enrollment records.
 
-### `GET /enrollments`
+Enrollment data is persisted in PostgreSQL.
 
-Returns the enrollments stored in the running application.
+Duplicate enrollments and references to nonexistent courses or students are handled through database constraints and application-level error handling.
 
-## CORS Configuration
+## Database and Models
 
-The API allows browser requests from the frontend development origin:
+The project uses SQLAlchemy 2.0 ORM.
 
-```text
-http://localhost:3000
+Main database models:
+
+- `Course`
+- `Student`
+- `Enrollment`
+
+The models define database tables, columns, relationships, and constraints.
+
+Database sessions are configured centrally and injected into API routes.
+
+PostgreSQL is used for persistent storage.
+
+## Migrations
+
+Alembic manages database schema changes.
+
+The project contains two migrations:
+
+- `0001` — creates the initial catalog tables.
+- `0002` — adds the `level` column to courses.
+
+Migration 0002 uses a three-step approach:
+
+1. Add the column in a way that supports existing records.
+2. Populate existing records with appropriate values.
+3. Apply the final NOT NULL constraint.
+
+Useful commands:
+
+```powershell
+alembic current
+alembic history
+alembic heads
+alembic check
+alembic upgrade head
 ```
 
-The FastAPI application uses `CORSMiddleware` with the following settings:
+The expected current revision is `08d83362f614`.
 
-```python
-allow_origins=["http://localhost:3000"]
-allow_methods=["*"]
-allow_headers=["*"]
+The project should have one migration head and no pending schema changes.
+
+## Error Handling
+
+Database integrity errors are mapped to appropriate HTTP responses using constraint names.
+
+Examples:
+
+- Duplicate student email — `409 Conflict`.
+- Duplicate enrollment — `409 Conflict`.
+- Unknown course — `404 Not Found`.
+- Unknown student — `404 Not Found`.
+- Invalid request data — `422 Unprocessable Entity`.
+
+## Verification
+
+Run the project verification scripts:
+
+```powershell
+python check_db.py
+python check_models.py
+python try_errors.py
+alembic check
+alembic heads
 ```
 
-The frontend must use the allowed origin exactly. For example, `http://127.0.0.1:3000` is a different origin from `http://localhost:3000`.
+The error-handling test script checks five cases:
 
-CORS controls whether browser JavaScript can access cross-origin responses. It does not prevent server-to-server requests from Next.js to FastAPI.
+1. Duplicate email.
+2. Duplicate enrollment.
+3. Unknown course.
+4. Unknown student.
+5. Student name validation.
 
-## Data Models and JSON Naming
+Previously observed result: 5/5 tests passed.
 
-Pydantic models use a shared `CamelModel` configuration with `to_camel` as the alias generator.
+## Experiment Log
 
-Python code uses snake_case attributes such as:
+| Experiment | Description and result |
+|---|---|
+| 1. Naming convention | Examined how constraint naming conventions affect generated constraint names. |
+| 2. Pydantic validation | Tested removing `min_length` from the student input schema. |
+| 3. Constraint name typo | Examined error mapping when a constraint name does not match. |
+| 4. Nullable title | Checked schema differences when the database column does not have the expected NOT NULL constraint. |
+| 5. Migration 0002 | Examined adding the course level field while preserving existing records. |
+| 6. Missing model import | Generated an experimental revision with no operations in this run. Restored the import and verified that `alembic check` passed. |
+| 7. Model without migration | Added `phone` to the Student model temporarily. Alembic detected the missing `students.phone` column. Removed the field and verified the schema again. |
+| 8. Multiple migration heads | Created two independent migration branches, observed the multiple-head error, merged the branches, and removed the experimental migration files. |
 
-- `is_elective`
-- `course_id`
-- `student_name`
+## Technical Decisions
 
-JSON requests and responses use camelCase aliases, such as:
+### Why map database errors by constraint name instead of SQLSTATE?
 
-- `isElective`
-- `courseId`
-- `studentName`
+Constraint names identify the specific business rule that was violated. This allows the application to distinguish errors such as duplicate email and duplicate enrollment and return appropriate HTTP responses.
 
-The API accepts field names and aliases during validation.
+SQLSTATE identifies a general database error category but does not always identify the specific application-level constraint.
 
-## Storage
+### Why catch integrity errors after commit instead of checking with SELECT first?
 
-Courses are loaded from the project's data module. Likes are updated in application memory.
+A preliminary SELECT does not guarantee that the data will remain unchanged before insertion. Another transaction could insert the same value between the check and the commit.
 
-Enrollments are also stored in an in-memory list. They are not persisted to a database, and the list resets when the application restarts.
+Database constraints provide reliable protection against such race conditions. The application catches the resulting integrity error and converts it into an HTTP response.
 
-## What Was Verified
+### Why increment likes using UPDATE instead of reading and updating in Python?
 
-- `GET /` returns `200 OK`
-- `GET /courses` returns six courses
-- `GET /courses/web-security` returns the requested course
-- `GET /courses/nope` returns `404 Not Found`
-- `is_elective=true` returns two courses
-- `is_elective=false` returns four courses
-- `sort=title` sorts courses alphabetically
-- `page=2&page_size=2` returns the second page
-- Swagger documentation is available at `/docs`
-- CORS allows the configured frontend origin
-- Course responses use camelCase JSON aliases
-- `POST /courses/{course_id}/like` increments the like count
-- `POST /enrollments` validates and creates an enrollment
-- `GET /enrollments` returns created enrollments
-- Invalid enrollment data returns `422`
-- Enrollment for an unknown course returns `404`
+A database-side operation:
+
+```sql
+UPDATE courses
+SET likes = likes + 1
+WHERE id = :course_id
+RETURNING likes;
+```
+
+avoids a separate read-modify-write sequence in application code. It also reduces the risk of lost updates when multiple requests increment likes concurrently.
+
+## Migration 0002 Self-Check
+
+| Check | Result |
+|---|---|
+| Migration goal and steps | Reviewed |
+| Existing data | Existing records preserved |
+| Renames and drops | No unintended table or column deletion in the final migration |
+| Rollback | Not tested against the actual database to protect existing data |
+| Verification | `alembic check` passed |
+| History | One head, migrations 0001 and 0002 |
+| Application | API supports the course `level` field |
+
+## Git
+
+The `.env` file contains local database credentials and must not be committed.
+
+The repository should contain `.env.example` with placeholder configuration instead.
