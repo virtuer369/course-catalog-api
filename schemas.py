@@ -18,6 +18,7 @@ class Course(CamelModel):
     credits: int
     is_elective: bool = False
     likes: int = 0
+    level: str
 
 
 class EnrollmentIn(CamelModel):

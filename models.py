@@ -33,6 +33,7 @@ class Course(Base):
     likes: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    level: Mapped[str]
 
     enrollments: Mapped[list["Enrollment"]] = relationship(
         back_populates="course"
