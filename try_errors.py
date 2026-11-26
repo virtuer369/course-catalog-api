@@ -1,79 +1,20 @@
-import requests
+import httpx
 
-BASE_URL = "http://127.0.0.1:8000"
-
-tests = [
-    {
-        "name": "Duplicate email",
-        "method": "POST",
-        "url": "/students",
-        "json": {
-            "name": "Another Aigerim",
-            "email": "aigerim@example.com"
-        },
-        "expected": 409,
-    },
-    {
-        "name": "Duplicate enrollment",
-        "method": "POST",
-        "url": "/enrollments",
-        "json": {
-            "courseId": "ai-integration",
-            "studentId": 3
-        },
-        "expected": 409,
-    },
-    {
-        "name": "Unknown course",
-        "method": "POST",
-        "url": "/enrollments",
-        "json": {
-            "courseId": "nope",
-            "studentId": 3
-        },
-        "expected": 404,
-    },
-    {
-        "name": "Unknown student",
-        "method": "POST",
-        "url": "/enrollments",
-        "json": {
-            "courseId": "web-security",
-            "studentId": 999
-        },
-        "expected": 404,
-    },
-    {
-        "name": "Name too short",
-        "method": "POST",
-        "url": "/students",
-        "json": {
-            "name": "A",
-            "email": "short@example.com"
-        },
-        "expected": 422,
-    },
+BASE = "http://localhost:8000"
+CASES = [
+    ("email already taken", "/students", {"name": "Aigerim Two", "email": "aigerim@example.com"}, 409, "email-taken"),
+    ("already enrolled", "/enrollments", {"courseId": "ai-integration", "studentId": 3}, 409, "already-enrolled"),
+    ("unknown course", "/enrollments", {"courseId": "nope", "studentId": 3}, 404, "course-not-found"),
+    ("unknown student", "/enrollments", {"courseId": "web-security", "studentId": 999}, 404, "student-not-found"),
+    ("name too short", "/students", {"name": "N", "email": "n@example.com"}, 422, None),
 ]
 
-passed = 0
-
-for test in tests:
-    response = requests.request(
-        test["method"],
-        BASE_URL + test["url"],
-        json=test["json"],
-    )
-
-    success = response.status_code == test["expected"]
-
-    if success:
-        passed += 1
-
-    status = "PASS" if success else "FAIL"
-
-    print(
-        f"{status}: {test['name']} "
-        f"(expected {test['expected']}, got {response.status_code})"
-    )
-
-print(f"\nResult: {passed}/{len(tests)} tests passed")
+failed = 0
+for title, path, body, status, slug in CASES:
+    response = httpx.post(BASE + path, json=body)
+    kind = response.json().get("type", "-").rsplit("/", 1)[-1]
+    ok = response.status_code == status and (slug is None or kind == slug)
+    failed += not ok
+    content_type = response.headers["content-type"]
+    print(f"{'ok  ' if ok else 'FAIL'} {title:<20} {response.status_code}  {content_type:<25} {kind}")
+print(f"{len(CASES) - failed} of {len(CASES)} as expected")
