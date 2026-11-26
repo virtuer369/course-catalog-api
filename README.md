@@ -2,6 +2,83 @@
 
 Backend REST API for managing courses, students, and enrollments. Built with FastAPI, PostgreSQL, SQLAlchemy 2.0, and Alembic.
 
+## Lab 8: REST and GraphQL
+
+The API now exposes both REST and Strawberry GraphQL over the same PostgreSQL database and SQLAlchemy services. Expected application errors are raised from `services.py`; REST converts them to `application/problem+json`, while GraphQL returns them in `userErrors`. GraphQL query errors remain in the top-level `errors` array even when the HTTP status is 200.
+
+### Run
+
+Install the requirements in the project virtual environment, copy `.env.example` to `.env`, set `DATABASE_URL`, and confirm the Lab 7 schema is at Alembic head with the seed data loaded. Start the API with:
+
+```powershell
+fastapi dev main.py
+```
+
+REST docs are at `http://localhost:8000/docs`; GraphiQL is at `http://localhost:8000/graphql`. Set `GRAPHQL_INTROSPECTION=false` in `.env` to disable schema introspection. `SQL_ECHO=true` logs SQL during the N+1 exercise. Every response includes the `X-SQL-Queries` header.
+
+To reset a local training database to the six courses, three students, and six enrollments, run `psql -h localhost -U catalog_app -d course_catalog -v ON_ERROR_STOP=1 -f seed.sql` from this folder. This intentionally clears the catalog tables before inserting the fixture.
+
+### GraphQL examples
+
+The `MyCourses` query returns exactly the fields used by the screen:
+
+```graphql
+query MyCourses($id: ID!) {
+  student(id: $id) {
+    name
+    enrollments { id course { title credits level } }
+  }
+}
+```
+
+Variables: `{ "id": "2" }`.
+
+Enrollments use a payload so expected business errors are part of the normal response:
+
+```graphql
+mutation Enroll($input: EnrollInput!) {
+  enroll(input: $input) {
+    enrollment { id }
+    userErrors { code message }
+  }
+}
+```
+
+Variables: `{ "input": { "courseId": "web-security", "studentId": "3" } }`.
+The schema SDL can be printed with `python print_schema.py`.
+
+### REST vs GraphQL measurement
+
+`python measure.py` reproduces the two server-side frontend data paths for student 2. With the supplied seed data and DataLoaders, the lab's reference measurements are:
+
+| API | Requests | Network rounds | Response bytes | SQL queries |
+|---|---:|---:|---:|---:|
+| REST | 5 | 2 | about 1,160 | 5 |
+| GraphQL | 1 | 1 | about 339 | 3 |
+
+The byte counts vary slightly with the data. REST needs a second round because the course IDs arrive in the enrollment response; GraphQL returns the selected course fields in one response. DataLoaders batch related records and bring the nested GraphQL query cost down from 7 queries (3 students) or 27 (20 students) to 3. The `more_students.sql` fixture adds students 4–20 and should only be run once before reseeding.
+
+### Experiment log
+
+The following are the outcomes the lab exercises are designed to demonstrate. Run the scripts against the local seeded database to record machine-specific timings and confirm the responses before a live demonstration.
+
+| Experiment | Observation | Explanation |
+|---|---|---|
+| 1. Query validation | A typo such as `titel` returns HTTP 200, `data: null`, and a GraphQL `errors` entry with a “Did you mean” hint. | GraphQL query errors are in the response body; HTTP success alone does not mean the query succeeded. |
+| 2. Nullability | Removing `| None` from `course` makes a missing course bubble to `data: null`; restoring it returns that field as `null` while preserving sibling data. | A non-null schema field is a promise; a null violation propagates to the nearest nullable parent. |
+| 3. Mutation over GET | A GraphQL query works over GET; a mutation over GET receives HTTP 400 and does not change likes. | GET must remain safe to repeat, prefetch, and cache. |
+| 4. N+1 growth | Before loaders, the nested query takes 7 SQL statements for 3 students and 27 for 20; GraphiQL may still look quick. | Lazy relationship access issues separate statements for each parent and related object. |
+| 5. Broken batch result | Returning rows in database order can first raise `WrongNumberOfResultsReturned`; when key and row counts happen to match, it can silently associate the wrong course with an enrollment. | A DataLoader batch must return one result per input key in the same key order. |
+| 6. Query protections | Depth over 5 and more than 10 aliases are rejected; invalid limits and nonnumeric IDs receive clear errors; unexpected database errors are masked. Twelve aliased likes are rejected before SQL execution. | Depth and alias limits constrain one request; argument validation helps clients fix input; `MaskErrors` hides internal details. |
+| 7. Introspection | With `GRAPHQL_INTROSPECTION=false`, `__schema` is rejected, ordinary queries still work, and typo hints can still reveal field names. | Disabling introspection hides schema browsing, but it is not authorization. |
+| 8. Frontend error handling | A bad GraphQL field becomes `GraphQLRequestError`; without the `errors` check the page instead crashes while reading null data; a stopped API causes `fetch failed`. | GraphQL errors can arrive with status 200, so the client must inspect `errors`; network failures have no GraphQL response. |
+
+The detailed response and SQL counts are produced by `try_graphql.py`, `try_n_plus_1.py`, `try_protection.py`, `flood_likes.py`, and `measure.py`. Restore the seed data after write experiments before comparing the reference measurements.
+
+### Project structure additions
+
+`services.py`, `problem.py`, `graphql_api.py`, and `counter.py` implement shared services, REST errors, GraphQL schema/resolvers, and per-request SQL counting. `try_errors.py`, `try_graphql.py`, `try_n_plus_1.py`, `try_protection.py`, `flood_likes.py`, `measure.py`, `more_students.sql`, and `print_schema.py` are lab exercises and measurement helpers.
+
 ## Technologies
 
 - Python
