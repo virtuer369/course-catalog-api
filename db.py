@@ -19,7 +19,7 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-engine = create_engine(settings.database_url)
+engine = create_engine(settings.database_url, echo=settings.sql_echo)
 
 SessionLocal = sessionmaker(
     bind=engine,
